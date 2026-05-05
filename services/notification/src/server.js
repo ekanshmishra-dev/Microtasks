@@ -20,33 +20,45 @@ const startServer = async () => {
       // 2. API Mode: Handle HTTP requests and Listen for Pub/Sub events
       app.listen(PORT, () => logger.info(`🚀 Notification API running on port ${PORT}`));
 
-      // Subscribe to Chat Service events
+      // In development, also run workers in the same process for simplicity
+      if (process.env.NODE_ENV === 'development') {
+        initWorkers();
+        logger.info('👷 Running Workers in same process (development)');
+      }
+
+      // Subscribe to Cross-Service events
       const subscriber = redisClient.duplicate();
-      await subscriber.connect();
       
-      await subscriber.subscribe('CHAT:NEW_MESSAGE', (message) => {
+      subscriber.on('message', (channel, message) => {
         try {
           const data = JSON.parse(message);
-          logger.info(`🔔 Received Pub/Sub: New message in ${data.roomName}`);
           
-          // Add job to queue for each recipient
-          // Note: In real app, you'd fetch user emails from DB/Auth service
-          data.recipients.forEach(userId => {
-            notificationService.sendNewMessageNotification(
-              'user@example.com', // Placeholder email
-              'User', // Placeholder name
-              data.senderName,
-              data.roomName,
-              data.content,
-              data.roomId
-            );
-          });
+          if (channel === 'CHAT:NEW_MESSAGE') {
+            logger.info(`🔔 Received Pub/Sub: New message in ${data.roomName}`);
+            data.recipients.forEach(userId => {
+              notificationService.sendNewMessageNotification(
+                'user@example.com', 
+                'User',
+                data.senderName,
+                data.roomName,
+                data.content,
+                data.roomId
+              );
+            });
+          }
+          
+          if (channel === 'AUTH:USER_REGISTERED') {
+            logger.info(`🔔 Received Pub/Sub: New user registered - ${data.email}`);
+            notificationService.sendWelcomeEmail(data.userId, data.name, data.email);
+          }
         } catch (err) {
-          logger.error('❌ Pub/Sub processing error:', err.message);
+          logger.error(`❌ Pub/Sub processing error on channel ${channel}:`, err.message);
         }
       });
+
+      await subscriber.subscribe('CHAT:NEW_MESSAGE', 'AUTH:USER_REGISTERED');
       
-      logger.info('📡 Subscribed to CHAT:NEW_MESSAGE events');
+      logger.info('📡 Subscribed to Cross-Service events');
     }
   } catch (error) {
     logger.error('❌ Failed to start Notification Service:', error);
