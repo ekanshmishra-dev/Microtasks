@@ -1,6 +1,7 @@
 import User from '../models/User.model.js';
 import { ApiError } from '@service-hub/common';
 import * as jwtUtils from '../utils/jwt.utils.js';
+import { client as redisClient } from '../config/redis.js';
 
 /**
  * Auth Service - Business Logic Layer
@@ -19,6 +20,19 @@ export const register = async (name, email, password) => {
   const { accessToken, refreshToken, tokenId } = jwtUtils.generateTokenPair(user._id);
   
   await jwtUtils.storeRefreshToken(user._id, refreshToken, tokenId);
+
+  // Trigger Notification Service
+  try {
+    await redisClient.publish('AUTH:USER_REGISTERED', JSON.stringify({
+      userId: user._id,
+      email: user.email,
+      name: user.name,
+      timestamp: new Date().toISOString()
+    }));
+  } catch (err) {
+    // We don't want to fail registration if notification fails
+    console.error('Failed to publish AUTH:USER_REGISTERED event:', err);
+  }
 
   return { user, tokens: { accessToken, refreshToken } };
 };
